@@ -5,6 +5,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { requestFingerprint } from "@rental-os/platform-contracts/request-fingerprint";
+import { rentalClientLocationId, assertRentalClientOrderLocation } from "./client-location-selection";
+import type { RentalOrder } from "./contracts";
 import { sqltag as sql, type Sql } from "@prisma/client/runtime/library";
 import { CoreBindingSchema, CoreScopeReferenceSchema, MemberCoreAssignmentSchema, TenantCoreGrantSchema,
   isCoreVersionSupported } from "@rental-os/core-contracts";
@@ -31,6 +33,7 @@ export { createRentalMemberAuthority } from "./application-member-authority";
 /** These are the server request properties written/used by the original Guard,
  * not a DTO to populate from body/query parameters. Staff routing must run first. */
 export interface RentalApplicationAccessRequest {
+  headers?: Record<string, unknown>;
   /** 只用于封闭原收据读取的同请求内容绑定，不提供授权。 */
   body?: unknown;
   method: string;
@@ -105,6 +108,7 @@ type RequestEvidence = {
   method: string;
   path: string;
   objectPath: string;
+  selectedLocationId?: string;
   tenantId: string;
   userId: string;
   audience: "operator" | "staff" | "client";
@@ -340,7 +344,7 @@ export function createRentalApplicationAccess(input: RentalApplicationAccessDepe
       || audience === "operator" && tenantManagementScope(method, path));
     if (!tenantScope && !workspaceId) throw new CoreAccessError("denied", "Rental 经营请求缺少原受权空间，不能退回租户范围");
     return { active: true, request, method, path, objectPath: normalizeRequestPath(request.url), tenantId: management?.tenantId ?? identity.tenantId, userId: identity.userId,
-      audience, workspaceId, sessionId, expiresAt, identity: identityFingerprint(),
+      audience, workspaceId, sessionId, expiresAt, selectedLocationId: rentalClientLocationId(request), identity: identityFingerprint(),
       sourceIdentity: identity, actor: actorFingerprint(request, audience), tenantScope,
       newBusiness: policy.isNewBusinessRoute(method, path), bufferedRead: false, deploymentContinuation: deploymentContinuation?.(method, path) === true,
       management: management?.kind, leases: new WeakMap(), memberLeases: new WeakMap(), recoveryLeases: new WeakMap() };
@@ -353,6 +357,7 @@ export function createRentalApplicationAccess(input: RentalApplicationAccessDepe
       || identityFingerprint() !== evidence.identity || actorFingerprint(evidence.request, evidence.audience) !== evidence.actor
       || evidence.request.method.toUpperCase() !== evidence.method || matchableRequestPath(evidence.request.url) !== evidence.path
       || normalizeRequestPath(evidence.request.url) !== evidence.objectPath
+      || rentalClientLocationId(evidence.request) !== evidence.selectedLocationId
       || evidence.originalReceiptFingerprint !== undefined
         && requestFingerprint(evidence.request.body) !== evidence.originalReceiptFingerprint
       || evidence.expiresAt !== undefined && evidence.expiresAt <= Date.now() / 1000) {
@@ -441,6 +446,17 @@ export function createRentalApplicationAccess(input: RentalApplicationAccessDepe
     if (tenants.length !== 1 || tenants[0].id !== tenantId || tenants[0].status?.toLowerCase() !== "active") {
       throw new CoreAccessError("denied", "Rental 租户当前不可用；尚无停用后的专项善后授权");
     }
+    if (evidence.selectedLocationId) {
+      const scope = evidence.sourceIdentity.locationScope;
+      if (evidence.audience !== "staff" || !scope || evidence.sourceIdentity.dataScope === "own"
+        || scope.mode === "selected" && !scope.locationIds.includes(evidence.selectedLocationId)) {
+        throw new CoreAccessError("denied", "所选门店已不在当前员工范围内");
+      }
+      const locations = await transaction.$queryRaw<Array<{ id: string }>>(sql`
+        SELECT id FROM rental_fulfillment_locations WHERE tenantId = ${tenantId}
+          AND workspaceId = ${evidence.workspaceId} AND id = ${evidence.selectedLocationId} AND status = 'enabled' LOCK IN SHARE MODE`);
+      if (locations.length !== 1 || locations[0].id !== evidence.selectedLocationId) throw new CoreAccessError("denied", "所选门店已不可用");
+    }
     const gates = await transaction.$queryRaw<Array<{ tenantId: string; coreId: string }>>(sql`
       SELECT tenant_id AS tenantId, core_id AS coreId FROM platform_core_access_locks
       WHERE tenant_id = ${tenantId} AND core_id = ${RENTAL_CORE_ID} LOCK IN SHARE MODE`);
@@ -495,7 +511,7 @@ export function createRentalApplicationAccess(input: RentalApplicationAccessDepe
     }
     assertEvidence(evidence);
   };
-  const assertOrder = async (transaction: RentalBusinessTenantTransaction, tenantId: string, workspaceId: string, orderId?: string) => {
+  const assertOrder = async (transaction: RentalBusinessTenantTransaction, tenantId: string, workspaceId: string, orderId?: string, selectedOrderLocked = true) => {
     const evidence = requests.getStore()?.evidence;
     if (evidence?.recovery) {
       assertEvidence(evidence);
@@ -505,6 +521,17 @@ export function createRentalApplicationAccess(input: RentalApplicationAccessDepe
       await lease.revalidate();
     }
     await assertCurrent(transaction, tenantId);
+    if (evidence?.selectedLocationId && orderId && selectedOrderLocked) {
+      // 原对象锁及同事务内检查所选门店；选择只收窄，不替换原成员/地点/dataScope复验。
+      const rows = await transaction.$queryRaw<Array<Pick<RentalOrder, "fulfillmentLocationId" | "returnLocationId"> & { serviceSnapshots: unknown }>>(sql`
+        SELECT fulfillmentLocationId, returnLocationId, serviceSnapshots FROM rental_orders
+        WHERE tenantId = ${tenantId} AND workspaceId = ${workspaceId} AND id = ${orderId}`);
+      if (rows.length !== 1) throw new CoreAccessError("denied", "所选门店的原订单不可用");
+      const row = rows[0], services = typeof row.serviceSnapshots === "string" ? JSON.parse(row.serviceSnapshots) : row.serviceSnapshots;
+      const occurrence = evidence.objectPath.match(/^\/rental\/v1\/orders\/[^/]+\/services\/([^/]+)\/(?:execution|execution-receipt)$/iu)?.[1];
+      assertRentalClientOrderLocation(evidence.selectedLocationId, { ...row,
+        serviceSnapshots: Array.isArray(services) ? services : undefined }, occurrence && decodeURIComponent(occurrence));
+    }
   };
   const readReceipt = async <T>(tenantId: string, orderId: string | null | undefined, read: () => Promise<T>): Promise<T> => {
     const evidence = requests.getStore()?.evidence;
@@ -521,7 +548,10 @@ export function createRentalApplicationAccess(input: RentalApplicationAccessDepe
     await recheck();
     return result;
   };
-  const fence = createRentalBusinessTenantFence(assertCurrent, beforeParent, assertOrder, assertOrder, readReceipt);
+  // 幂等操作锁可能早于原订单锁；所选订单事实只在原订单锁取得后读取，避免提前建立旧快照。
+  const fence = createRentalBusinessTenantFence(assertCurrent, beforeParent,
+    (transaction, tenantId, workspaceId, orderId) => assertOrder(transaction, tenantId, workspaceId, orderId, false),
+    assertOrder, readReceipt);
   const verifyWorkspaceTarget = async (transaction: RentalBusinessTenantTransaction, target: RentalClientWorkspaceTarget) => {
     const evidence = requests.getStore()?.evidence;
     if (!evidence || evidence.audience !== "client" || evidence.method !== "POST"

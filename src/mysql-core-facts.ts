@@ -829,6 +829,7 @@ export class RentalCoreFactRepository<TTransaction extends RentalCoreFactTransac
       )`);
     }
     if (query.status) conditions.push(sql`o.\`status\` = ${query.status}`);
+    if (query.locationId) conditions.push(sql`(o.\`fulfillmentLocationId\` = ${query.locationId} OR o.\`returnLocationId\` = ${query.locationId})`);
     const keyword = query.keyword?.trim();
     if (keyword) {
       const pattern = `%${keyword.replace(/[\\%_]/g, "\\$&")}%`;

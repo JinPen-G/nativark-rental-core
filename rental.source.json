@@ -68,6 +68,8 @@
         "src/ai-http-policy.ts",
         "src/ai-inspection-http.ts",
         "src/ai-inspection-transactions.ts",
+        "src/ai-installation-observation.ts",
+        "src/ai-installation-status.ts",
         "src/ai-main.ts",
         "src/ai-openapi.ts",
         "tsconfig.ai.json"

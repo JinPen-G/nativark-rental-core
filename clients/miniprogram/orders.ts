@@ -24,6 +24,7 @@ import type {
   RentalOrderExtensionPreview,
 } from "../../src/contracts";
 import type { RentalMiniProgramClientPorts } from "./ports";
+import type { RentalClientCancellationReceipt } from "../../src/client-contribution-context";
 
 export interface CreateOrderResult {
   order: ClientOrderView;
@@ -68,6 +69,10 @@ export function createRentalMiniProgramOrdersApi(ports: RentalMiniProgramClientP
 
   async function cancelOrder(orderId: string, reason: string, idempotencyKey: string): Promise<CreateOrderResult> {
     return request<CreateOrderResult>(`/orders/${encodeURIComponent(orderId)}/cancel`, { method: "POST", data: { reason }, idempotencyKey });
+  }
+
+  function readCancellationReceipt(orderId: string, idempotencyKey: string): Promise<RentalClientCancellationReceipt> {
+    return request(`/orders/${encodeURIComponent(orderId)}/cancel-receipt`, { idempotencyKey, replayAfterRefresh: false });
   }
 
   async function listExtensions(orderId: string): Promise<RentalOrderExtension[]> {
@@ -136,6 +141,7 @@ export function createRentalMiniProgramOrdersApi(ports: RentalMiniProgramClientP
     fetchFunding,
     previewCancellation,
     cancelOrder,
+    readCancellationReceipt,
     listExtensions,
     previewExtension,
     applyExtension,

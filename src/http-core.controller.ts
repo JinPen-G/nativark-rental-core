@@ -3,6 +3,7 @@ import { prismaRuntime } from "@rental-os/platform-server/prisma-runtime";
 import type { SystemUserRow } from "@rental-os/platform-contracts";
 import { RENTAL_HTTP_CORE, RENTAL_HTTP_ALLOCATION, RENTAL_HTTP_BUSINESS, RENTAL_HTTP_ORDER_CONFIRMATION, RENTAL_HTTP_IDEMPOTENT, RENTAL_HTTP_REPORTS, RENTAL_HTTP_DATABASE, RENTAL_HTTP_SERVICE_CAPACITIES, RENTAL_HTTP_FUNDING, RENTAL_HTTP_DOCUMENTS, RENTAL_HTTP_OPERATION_LOGS, RENTAL_HTTP_CORPORATE_SETTLEMENT, RENTAL_HTTP_MEMBERSHIPS, RENTAL_HTTP_FAILURE_EVENTS, RENTAL_HTTP_EXCHANGE_PREVIEW, RENTAL_HTTP_EXCHANGE_INSPECTIONS, RENTAL_HTTP_EXCHANGE_INSPECTION_MEDIA, type RentalHttpApplications } from "./http-applications";
 import { rentalHttpBusinessContext, rentalHttpIdempotencyKey as idempotencyKeyOf } from "./http-context";
+import { rentalClientLocationId, assertRentalClientOrderLocation } from "./client-location-selection";
 import { BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, Inject, Logger, Optional, Param, Patch, Post, Put, Query, Req, Res, UploadedFile, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import type { Prisma } from "@prisma/client";
@@ -197,6 +198,27 @@ function returnedQuantitiesOf(
 
 @Controller("rental/v1")
 export class RentalCoreController {
+  /** 只观察当前普通经营准入；实际动作仍通过原 Guard、对象和事务复验。 */
+  @Get("contribution-access")
+  contributionAccess(@Req() req: AuthenticatedRequest) {
+    if (!hasPermissionCode(req.user, "rental-os:order:operate")) throw new ForbiddenException("无订单操作权限");
+    return { allowed: true as const };
+  }
+  /** 只读普通页面准入：沿原订单查看及地点/dataScope 查询，不登记为历史善后。 */
+  @Get("contribution-page-access")
+  async contributionPageAccess(@Req() req: AuthenticatedRequest) {
+    if (!hasPermissionCode(req.user, "rental-os:order:view")) throw new ForbiddenException("无订单查看权限");
+    await this.service.queryOrders(req.user.tenantId, { page: 1, pageSize: 1 });
+    return { allowed: true as const };
+  }
+  /** 只投影原已提交地点的名称与ID，不下发地址、联系人或提升地点管理权限。 */
+  @Get("contribution-locations")
+  async contributionLocations(@Req() req: AuthenticatedRequest) {
+    if (!getRequestIdentity()?.staffApi || !hasPermissionCode(req.user, "rental-os:order:view")) throw new ForbiddenException("需要当前员工订单查看权限");
+    if (getRequestIdentity()?.dataScope === "own") return [];
+    return (await this.service.readLocations(req.user.tenantId)).filter(row => row.status === "enabled")
+      .map(row => ({ id: row.id, name: row.name }));
+  }
   private readonly notificationLogger = new Logger(RentalCoreController.name);
   constructor(
     @Inject(RENTAL_HTTP_CORE) private readonly service: RentalHttpApplications["core"],
@@ -1034,7 +1056,7 @@ export class RentalCoreController {
    * 空间不由客户端传入，与其他路由一样从会话解析。
    */
   @Get("orders") async orders(@Req() req: AuthenticatedRequest, @Query() query: ListRentalOrdersQueryDto) {
-    const result = await this.service.queryOrders(req.user.tenantId, query);
+    const result = await this.service.queryOrders(req.user.tenantId, { ...query, locationId: rentalClientLocationId(req) });
     return query.page !== undefined || query.pageSize !== undefined ? result : result.items;
   }
   /**
@@ -1083,7 +1105,11 @@ export class RentalCoreController {
     }, { isolationLevel: prismaRuntime.TransactionIsolationLevel.ReadCommitted });
     return snapshot;
   }
-  @Get("orders/:id") order(@Req() req: AuthenticatedRequest, @Param("id") id: string) { return this.service.getOrder(req.user.tenantId, id); }
+  @Get("orders/:id") async order(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
+    const order = await this.service.getOrder(req.user.tenantId, id);
+    assertRentalClientOrderLocation(rentalClientLocationId(req), order);
+    return order;
+  }
   @Post("orders") async createOrder(@Req() req: AuthenticatedRequest, @Body() body: CreateRentalOrderDto) {
     const context = (await this.context(req.user.tenantId));
     // CAM-01A：带风险下单必须「有权限 + 填原因」。原因由 DTO 与能力 Hook 共同保证
@@ -2603,7 +2629,8 @@ export class RentalCoreController {
     const tenantId = req.user.tenantId, key = idempotencyKeyOf(req);
     if (!key) throw new BadRequestException("读取原服务收据必须携带 Idempotency-Key");
     // Check current scope even when no receipt exists; key possession grants nothing.
-    await this.service.getOrder(tenantId, id);
+    const current = await this.service.getOrder(tenantId, id);
+    assertRentalClientOrderLocation(rentalClientLocationId(req), current, occurrenceId);
     const receipt = await this.idempotent.readReceipt({ tenantId, action: "order.service-execution", key, orderId: id,
       replay: (response) => this.serviceExecutionReceipt(tenantId, id, occurrenceId, response) });
     return receipt ? { status: "committed" as const, ...receipt } : { status: "unknown" as const };
@@ -2616,6 +2643,10 @@ export class RentalCoreController {
     @Param("occurrenceId") occurrenceId: string,
     @Body() body: UpdateRentalServiceOccurrenceDto
   ) {
+    // 员工分面只开放本期开始动作，不连带开放完成、取消、失败或其他处理。
+    if (getRequestIdentity()?.staffApi && (body.action !== "start" || !idempotencyKeyOf(req))) {
+      throw new ForbiddenException("员工服务开始须使用原操作键，其他服务动作未开放");
+    }
     const tenantId = req.user.tenantId;
     const operationKey = idempotencyKeyOf(req);
     // Complete may be one of many segments. A fixed action fallback cannot

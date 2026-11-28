@@ -100,7 +100,7 @@ const recoveryHandlers = new Map<Function, RentalRecoveryKind>([
     EnterpriseReadController.prototype.orderFinance, EnterpriseReadController.prototype.exportOrderFinance,
     core.listCarrierShipmentEvents, core.revealOrderDeliveryAddress, core.listInternalOrderNotes,
     core.getServiceExecutionReceipt, business.fundingEvents,
-    client.listOrders, client.myOrders, client.orderDetail, client.fulfillment, client.orderDocument,
+    client.cancellationReceipt, client.listOrders, client.myOrders, client.orderDetail, client.fulfillment, client.orderDocument,
     client.orderDocumentVersions, client.feeItems, client.extensions, client.funding, client.paymentIntent,
     PaymentOperationsController.prototype.listPaymentIntents,
     PaymentOperationsController.prototype.listPaymentRefunds].map(handler => [handler, "history"] as const),
@@ -125,8 +125,9 @@ const callbackHandlers: readonly Function[] = [webhook.alipay, webhook.wechatPay
 // unavailable. Only these existing handlers may use the original Guard/service alone;
 // declarations supplied by another module cannot turn a business handler into identity.
 const identityHandlers = new Map<Type<unknown>, readonly Function[]>([
+  [ClientApiController, [client.contributionContext]],
   [StaffAuthController, [staffAuth.login, staffAuth.refresh, staffAuth.logout, staffAuth.me,
-    staffAuth.sessionContext, staffAuth.changePassword, staffAuth.switchWorkspace]],
+    staffAuth.sessionContext, staffAuth.contributionContext, staffAuth.changePassword, staffAuth.switchWorkspace]],
   [RentalAuthExtensionsController, [authExtensions.resetLocalDemoPassword, authExtensions.switchWorkspace]],
   [StaffSubscriptionController, [StaffSubscriptionController.prototype.context]]
 ]);
@@ -151,6 +152,9 @@ function unresolved(controller: Type<unknown>, handlers: readonly Function[], re
 /** Only this bounded set has been traced through its current services. Additional
  * declarations must name actual controller functions and their reviewed boundary. */
 export const RENTAL_HTTP_REVIEWED_ACCESS: readonly RentalHttpAccessDeclaration[] = Object.freeze([
+  ...reviewed(ClientApiController, [client.contributionContext], "buffered-read",
+    "original current client Auth/Guard identity only, minimal session projection and read-only same-identity recheck; no business grant")
+    .map(item => ({ ...item, review: { ...item.review, ingress: "platform-identity" as const } })),
   ...RENTAL_INTEGRATION_HTTP_ACCESS,
   ...callbackHandlers.map(handler => Object.freeze({ controller: PaymentWebhookController, handler,
     review: Object.freeze({ kind: "transactional-write" as const, ingress: "payment-callback" as const,
@@ -182,7 +186,7 @@ export const RENTAL_HTTP_REVIEWED_ACCESS: readonly RentalHttpAccessDeclaration[]
     client.membershipBenefits, client.corporateIdentities, client.qualificationTypes, client.qualifications,
     client.catalog, client.availability, client.quoteDetail, client.myOrders, client.listOrders, client.orderDetail,
     client.fulfillment, client.rentalHandoffMaterial, client.orderDocumentVersions, client.feeItems,
-    client.previewCancellation, client.extensions, client.previewExtension, client.funding], "buffered-read",
+    client.contributionAccess, client.contributionPageAccess, client.cancellationReceipt, client.previewCancellation, client.extensions, client.previewExtension, client.funding], "buffered-read",
     "original client applications read own customer/current workspace and original order/payment/member projections; complete MySQL context readers refresh committed cache without initialization, displayed expired assignments are projections only; funding order lock reads existing facts; no financial or membership command"),
   ...reviewed(ClientApiController, [client.coupons, client.orderDocument], "maintained-read",
     "original coupons only expire claimed rows under RC Tenant/Core; original document render archives content-addressed original snapshot under RC Tenant/Core and unique replay, requested saved snapshot remains original; return rechecks current access"),
@@ -216,7 +220,7 @@ export const RENTAL_HTTP_REVIEWED_ACCESS: readonly RentalHttpAccessDeclaration[]
   ...reviewed(RentalCoreController, [core.createExchangeInspectionMedia, core.completeExchangeInspectionMedia,
     core.prepareExchangeInspection], "transactional-write",
     "original exchange media/preparation transaction uses Tenant/Core then original Order and operation key; file persistence/claim/dispatch participants share original scope, unknown original claims are only observed and never replaced or resent"),
-  ...reviewed(StaffAuthController, [staffAuth.me, staffAuth.sessionContext], "buffered-read",
+  ...reviewed(StaffAuthController, [staffAuth.me, staffAuth.sessionContext, staffAuth.contributionContext], "buffered-read",
     "same original AuthSessionService/RentalAuthService and staff audience; reads own live session, account, original workspace and capability context, never grants business/Core permission")
     .map(item => ({ ...item, review: { ...item.review, ingress: "platform-identity" as const } })),
   ...reviewed(StaffAuthController, [staffAuth.login, staffAuth.refresh, staffAuth.logout,
@@ -376,7 +380,7 @@ export const RENTAL_HTTP_REVIEWED_ACCESS: readonly RentalHttpAccessDeclaration[]
     core.dispositions, core.workOrders, core.workOrderAssignees, core.workOrderHistory, core.workbenchTodos,
     core.orders, core.order, core.orderDocumentVersions, core.orderDocumentVersion, core.allocationCandidates,
     core.listInternalOrderNotes, core.extensions, core.changes, core.exchangeServiceOptions, core.templates,
-    core.inspections, core.getServiceExecutionReceipt], "buffered-read",
+    core.contributionAccess, core.contributionPageAccess, core.contributionLocations, core.inspections, core.getServiceExecutionReceipt], "buffered-read",
     "http-core handlers -> original configuration snapshots, factStore find/query/list, membership/address projections, reports aggregate, allocation candidates, document snapshot reads and idempotent.readReceipt; state/cache projection only, no factContext initialization or persist/append/render"),
   ...reviewed(RentalBusinessController, [business.pricingPlans, business.priceVersions, business.priceVersion,
     business.legacyPriceVersions, business.listPriceAdjustments, business.listSpacePriceAdjustments,

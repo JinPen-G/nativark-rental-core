@@ -23,6 +23,7 @@ import type {
   RentalOrderPage,
   RentalQuoteRequest,
   RentalQuoteSnapshotV1,
+  RentalServiceExecutionReceipt,
 } from "../../src/contracts";
 import type { RentalStaffOrdersPorts } from "./ports";
 
@@ -71,6 +72,15 @@ export function createRentalStaffOrdersApi({ request, withStaffAction }: RentalS
 
   function getOrder(orderId: string): Promise<RentalOrder> {
     return request<RentalOrder>(orderPath(orderId));
+  }
+
+  function startServiceOccurrence(orderId: string, occurrenceId: string, idempotencyKey: string): Promise<Omit<Extract<RentalServiceExecutionReceipt, { status: "committed" }>, "status">> {
+    return request(orderPath(orderId, `/services/${encodeURIComponent(occurrenceId)}/execution`), {
+      method: "POST", data: { action: "start" }, idempotencyKey, replayAfterRefresh: false });
+  }
+
+  function readServiceExecutionReceipt(orderId: string, occurrenceId: string, idempotencyKey: string): Promise<RentalServiceExecutionReceipt> {
+    return request(orderPath(orderId, `/services/${encodeURIComponent(occurrenceId)}/execution-receipt`), { idempotencyKey, replayAfterRefresh: false });
   }
 
   function listInternalOrderNotes(orderId: string): Promise<RentalOrderInternalNote[]> {
@@ -240,6 +250,8 @@ export function createRentalStaffOrdersApi({ request, withStaffAction }: RentalS
   return {
     listOrders,
     getOrder,
+    startServiceOccurrence,
+    readServiceExecutionReceipt,
     listInternalOrderNotes,
     createInternalOrderNote,
     getOrderFunding,

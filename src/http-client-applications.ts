@@ -24,7 +24,7 @@ export interface RentalClientReadGuard {
 
 export interface RentalClientHttpApplications {
   api: Pick<ClientApiService,
-    "applyExtension" | "availability" | "bookingOptions" | "cancelOrder" |
+    "applyExtension" | "availability" | "bookingOptions" | "cancelOrder" | "cancellationReceipt" | "contributionContext" |
     "catalog" | "channelBootstrap" | "claimCoupon" | "closePaymentIntent" |
     "completeQualificationUpload" | "config" | "contacts" | "corporateIdentities" |
     "coupons" | "createMiniProgramPaymentIntent" | "createOrder" | "createPaymentIntent" |

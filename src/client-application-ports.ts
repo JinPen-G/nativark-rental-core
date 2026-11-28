@@ -45,7 +45,7 @@ export type RentalClientBusiness = Pick<RentalHttpApplications["business"],
 
 export type RentalClientOrderConfirmation = Pick<RentalHttpApplications["orderConfirmation"],
   "fingerprintOrderRequest" | "readOrderCreation" | "createApprovedOrder" | "createOrder">;
-export type RentalClientIdempotentActions = Pick<RentalHttpApplications["idempotent"], "executeWithReplayFlag" | "executeInTransaction">;
+export type RentalClientIdempotentActions = Pick<RentalHttpApplications["idempotent"], "executeWithReplayFlag" | "executeInTransaction" | "readReceipt">;
 export type RentalClientFunding = Pick<RentalHttpApplications["funding"], "listEvents" | "recordEvent">;
 export type RentalClientServiceCapacities = Pick<RentalHttpApplications["serviceCapacities"],
   "readAvailabilityForQuote" | "releaseForOrder" | "reserveForOrder" | "confirmForOrder">;

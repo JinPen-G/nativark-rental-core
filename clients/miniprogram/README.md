@@ -162,3 +162,7 @@ npm run build -w @rental-os/miniprogram -- --release --rental-package <待部署
 ## 验证入口
 
 必要类型检查核对七组业务工厂、八个 AI 请求工厂、认证工厂、三组原操作编排及原 API／页面消费者；定向冒烟对照原请求路径、选项、返回与错误，并复用[原小程序测试](<https://github.com/JinPen-G/Nativark/blob/1999dd8bb0cb84f07a6ef16935853aa895835ba0/tests/miniprogram-static.test.cjs>)的运输、范围、支付单和缓存断言。认证片已核原 16 方法、会话采用与退出清理，正式 Native 声明与原客户宿主类型通过；这份证据不代替加入认证后的完整微信发布包验证。正式包出口、类型解析和微信构建由实际宿主接线核定，真实 HTTP、微信、数据库与供应商证据按对应环境取得。
+
+## 通用外壳接点
+
+普通客户 contribution 与会话/权限适配见[共用贡献](../contribution/README.md)。原订单 SDK 的 `readCancellationReceipt(orderId, idempotencyKey)` 只读原取消结果；`unknown` 不证明未提交。

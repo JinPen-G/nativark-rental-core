@@ -26,6 +26,13 @@ import { aiLeafToOpenApi30 } from "./http-openapi-json-schema";
 import { adminContainerRadiusInput, adminControlRadiusInput, storedAdminRadiusSchema, rentalCategoryCodeSchema, stringSchema, numberSchema, booleanSchema, objectSchema, ref, arrayOf, objectOf, type SchemaObject } from "./http-openapi-contract";
 
 export const RENTAL_HTTP_COMPONENT_SCHEMAS: Record<string, SchemaObject> = {
+  RentalClientContributionContext: objectOf({ audience: { type: "string", enum: ["client", "staff"] },
+    tenantId: stringSchema, subjectId: stringSchema, workspaceId: stringSchema, sessionRevision: stringSchema,
+    authorizationRevision: stringSchema, displayName: stringSchema, tenantName: stringSchema,
+    workspaceName: stringSchema, canAct: booleanSchema }, ["audience", "tenantId", "subjectId", "workspaceId",
+    "sessionRevision", "authorizationRevision", "displayName", "tenantName", "canAct"]),
+  RentalClientCancellationReceipt: objectOf({ status: { type: "string", enum: ["committed", "unknown"] },
+    orderId: stringSchema, operationKey: stringSchema }, ["status", "orderId", "operationKey"]),
   ...JOBS_OPENAPI_SCHEMAS,
   ...NOTIFICATIONS_OPENAPI_SCHEMAS,
   ...STAFF_UPLOAD_OBSERVATION_SCHEMAS,

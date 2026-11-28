@@ -8,6 +8,33 @@ import { RENTAL_CATEGORY_DEFINITIONS } from "./contracts";
 export type RentalCategoryInitializationTransaction = Pick<Prisma.TransactionClient,
   "rentalCategoryDefinition" | "rentalCategoryVersion" | "rentalCategoryVersionPolicy">;
 
+const builtinCategoryVersion = (runtime: typeof RENTAL_CATEGORY_DEFINITIONS[number]) => {
+  const digest = createHash("sha256").update(JSON.stringify(runtime)).digest("hex").slice(0, 24);
+  return { id: `builtin:${runtime.code}:${digest}`, label: `builtin-${runtime.version}-${digest}` };
+};
+
+/** 只读原初始化对象；既有推荐、政策和空间采用不等于部署初始化，也不在此改写。 */
+export async function readRentalCategoryInitialization(transaction: RentalCategoryInitializationTransaction) {
+  const categories: Array<{ code: string; state: "initialized" | "missing" | "conflict" }> = [];
+  for (const runtime of RENTAL_CATEGORY_DEFINITIONS) {
+    const builtinId = builtinCategoryVersion(runtime).id, legacyId = `legacy:${runtime.code}`;
+    const [category, legacy, builtin, legacyPolicy, builtinPolicy] = await Promise.all([
+      transaction.rentalCategoryDefinition.findUnique({ where: { code: runtime.code }, select: { code: true } }),
+      transaction.rentalCategoryVersion.findUnique({ where: { id: legacyId }, select: { categoryCode: true, status: true } }),
+      transaction.rentalCategoryVersion.findUnique({ where: { id: builtinId }, select: { categoryCode: true, status: true, definition: true } }),
+      transaction.rentalCategoryVersionPolicy.findUnique({ where: { versionId: legacyId }, select: { versionId: true } }),
+      transaction.rentalCategoryVersionPolicy.findUnique({ where: { versionId: builtinId }, select: { versionId: true } })
+    ]);
+    const conflict = legacy && (legacy.categoryCode !== runtime.code || legacy.status !== "legacy_baseline")
+      || builtin && (builtin.categoryCode !== runtime.code || builtin.status !== "published"
+        || !isDeepStrictEqual(builtin.definition, JSON.parse(JSON.stringify(runtime))));
+    categories.push({ code: runtime.code, state: conflict ? "conflict"
+      : category && legacy && builtin && legacyPolicy && builtinPolicy ? "initialized" : "missing" });
+  }
+  return { state: categories.some(item => item.state === "conflict") ? "conflict" as const
+    : categories.every(item => item.state === "initialized") ? "initialized" as const : "uninitialized" as const, categories };
+}
+
 /** 该显式部署动作不是 HTTP 授权入口；宿主须先核定迁移、运维权限并包在事务内。 */
 export async function initializeRentalCategories(transaction: RentalCategoryInitializationTransaction,
   input: { actorId: string; now: Date }) {
@@ -38,10 +65,9 @@ export async function initializeRentalCategories(transaction: RentalCategoryInit
       publishReason: "Current DB definition only; not historical order evidence"
     } });
     await transaction.rentalCategoryVersionPolicy.upsert({ where: { versionId }, update: {}, create: { versionId } });
-    const digest = createHash("sha256").update(JSON.stringify(runtime)).digest("hex").slice(0, 24);
-    const builtinId = `builtin:${runtime.code}:${digest}`;
+    const builtinIdentity = builtinCategoryVersion(runtime), builtinId = builtinIdentity.id;
     const builtin = await transaction.rentalCategoryVersion.upsert({ where: { id: builtinId }, update: {}, create: {
-      id: builtinId, categoryCode: stored.code, versionLabel: `builtin-${runtime.version}-${digest}`,
+      id: builtinId, categoryCode: stored.code, versionLabel: builtinIdentity.label,
       sourceVersionId: versionId, sourceKind: "builtin_runtime", status: "published",
       definition: asJson(runtime), publishedAt: input.now, publishedBy: input.actorId, publishReason: "内置运行定义首次初始化"
     } });

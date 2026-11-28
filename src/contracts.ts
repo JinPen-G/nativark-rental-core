@@ -6100,6 +6100,8 @@ export type RentalOrderSortField = (typeof RENTAL_ORDER_SORT_FIELDS)[number];
  * （兼容既有调用方），给了任一分页参数才返回 `RentalOrderPage` 信封。
  */
 export interface RentalOrderListQuery {
+  /** 宿主已校验的门店筛选，仅与原地点/dataScope范围求交，不授予访问权。 */
+  locationId?: string;
   page?: number;
   /** 缺省 `RENTAL_ORDER_LIST_DEFAULT_PAGE_SIZE`，上限 `RENTAL_ORDER_LIST_MAX_PAGE_SIZE`。 */
   pageSize?: number;

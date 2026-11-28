@@ -1,6 +1,6 @@
 {
   "name": "@rental-os/rental-core",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "license": "MIT",
   "description": "Rental业务Core的独立领域合同与运行时，原组合通过兼容出口消费",
@@ -2468,7 +2468,8 @@
     "./admin/browser-page-icons": {
       "types": "./admin/browser-page-icons.tsx",
       "default": "./admin/browser-page-icons.tsx"
-    }
+    },
+    "./clients/contribution": "./clients/contribution/index.ts"
   },
   "typesVersions": {
     "*": {
@@ -4664,6 +4665,9 @@
       ],
       "admin/browser-page-icons": [
         "./admin/browser-page-icons.tsx"
+      ],
+      "clients/contribution": [
+        "./clients/contribution/index.ts"
       ]
     }
   },
@@ -4676,7 +4680,9 @@
     "lint:native-clients": "node ../../scripts/miniprogram-shared-types.cjs --build-native-clients --check",
     "prebuild:contracts": "npm run build -w @rental-os/platform-contracts",
     "build:contracts": "tsc -p tsconfig.contracts.json",
-    "postbuild": "npm run build:native-clients"
+    "postbuild": "npm run build:native-clients",
+    "build:client-contribution": "tsc -p tsconfig.client-contribution.json",
+    "lint:client-contribution": "tsc -p tsconfig.client-contribution.json --noEmit"
   },
   "dependencies": {
     "@rental-os/platform-contracts": "0.1.0",
@@ -4713,7 +4719,8 @@
     "@animate-ui/react": "2.3.0",
     "react-markdown": "10.1.0",
     "ajv-formats": "2.1.1",
-    "@nestjs/config": "^3.3.0"
+    "@nestjs/config": "^3.3.0",
+    "@rental-os/platform-client-contracts": "0.1.0"
   },
   "peerDependenciesMeta": {
     "@nestjs/common": {
@@ -4807,6 +4814,9 @@
       "optional": true
     },
     "@nestjs/config": {
+      "optional": true
+    },
+    "@rental-os/platform-client-contracts": {
       "optional": true
     }
   }

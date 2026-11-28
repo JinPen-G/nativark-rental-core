@@ -159,3 +159,7 @@ AI 检查原收据读取由订单工厂提供，原员工订单入口供给同�
 订单列表、详情、新建、配货、领取和归还，资产列表、详情、登记和库存流水，客户列表、详情与编辑，工单列表与执行页、工作台和扫码均通过原薄入口消费本实现。页面权限和原操作键由既有宿主供给。[员工页面](<https://github.com/JinPen-G/Nativark/blob/1999dd8bb0cb84f07a6ef16935853aa895835ba0/apps/staff-miniprogram/src/pages>) · [扫码入口](<https://github.com/JinPen-G/Nativark/blob/1999dd8bb0cb84f07a6ef16935853aa895835ba0/apps/staff-miniprogram/src/core/scan.ts>)
 
 必要类型检查覆盖已声明工厂、原薄入口及直接页面。原员工测试中的现场新增与编辑场景验证报价、建单、客户写入和持久幂等键，定向缓存冒烟核会话失效、并发读取及保存后的缓存提交。原测试加载器与微信发布构建须使用正式客户端闭包，类型、离线宿主替身、微信构建和真实服务分别核验。[原员工测试](<https://github.com/JinPen-G/Nativark/blob/1999dd8bb0cb84f07a6ef16935853aa895835ba0/tests/staff-miniprogram-static.test.cjs>)
+
+## 通用外壳接点
+
+员工 contribution 与会话/权限适配见[共用贡献](../contribution/README.md)。订单 SDK 的 `startServiceOccurrence` 和 `readServiceExecutionReceipt` 显式消费原键，仅开始动作开放给员工；不依赖可选 AI 或附件存储。

@@ -493,8 +493,9 @@ test("client withdrawal/password change during wait denies recovery and a cloned
     ClientApiController, request => { request.client = { ...request.client }; }));
 });
 
-test("the nine history handlers bind exact own-order or workspace subjects; adjacent commands remain closed", () => {
+test("the ten history handlers bind exact own-order or workspace subjects; adjacent commands remain closed", () => {
   const routes = [
+    [ClientApiController, "cancellationReceipt", "/client/v1/orders/OrderA/cancel-receipt", "order"],
     [RentalCoreController, "originalExchangeInspectionMedia", "/rental/v1/orders/OrderA/exchange-inspection/media/operations/original-key", "order"],
     [RentalCoreController, "readExchangeInspection", "/rental/v1/orders/OrderA/exchange-inspection/preparations/preparation", "order"],
     [RentalCoreController, "originalExchangeInspection", "/rental/v1/orders/OrderA/exchange-inspection/operations/original-key", "order"],
@@ -515,7 +516,7 @@ test("the nine history handlers bind exact own-order or workspace subjects; adja
     assert.throws(() => bindRentalRecovery({ ...route.recovery }, { method: "GET", url }));
     if (scope === "order") assert.throws(() => bindRentalRecovery(route.recovery, { method: "GET", url: url.replace("OrderA", "Order%2fA") }));
   }
-  assert.equal(policy.routes.filter(route => route.recovery).length, 89);
+  assert.equal(policy.routes.filter(route => route.recovery).length, 90);
   for (const [controller, handler] of [[RentalCoreController, "prepareExchangeInspection"], [RentalCoreController, "completeExchangeInspectionMedia"],
     [EnterpriseWorkflowsController, "confirmExchangeInspection"], [EnterpriseWorkflowsController, "exchangeInspectionMaterial"],
     [PaymentReconciliationController, "importStatement"], [PaymentReconciliationController, "reviewStatementLine"], [PaymentReconciliationController, "reconcile"]]) {

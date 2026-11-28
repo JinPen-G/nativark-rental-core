@@ -16,8 +16,8 @@ export function createRentalManifest(input: {
     description: "保留品类、经营空间、会员、报价订单、履约资金及各端接口的租赁业务 Core",
     author: "Zelo contributors", version: RENTAL_CORE_VERSION, source: input.source, license: "MIT",
     compatibility: {
-      // 拆仓发行使用底座0.2系列；公共接入合同仍独立保持0.1系列。
-      platform: { minInclusive: "0.2.0", maxExclusive: "0.3.0" },
+      // 新候选支持底座0.3；已发行包保留其原清单及兼容区间。
+      platform: { minInclusive: "0.2.0", maxExclusive: "0.4.0" },
       contract: { minInclusive: "0.1.1", maxExclusive: "0.2.0" }
     },
     runtime: { node: { minInclusive: "22.12.0", maxExclusive: "25.0.0" } },

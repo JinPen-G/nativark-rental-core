@@ -23,6 +23,7 @@ const STAFF_AUTH_PATHS = new Set([
   "/staff/v1/auth/logout",
   "/staff/v1/auth/me",
   "/staff/v1/auth/session-context",
+  "/staff/v1/auth/contribution-context",
   "/staff/v1/auth/change-password",
   "/staff/v1/auth/switch-workspace"
 ]);
@@ -71,6 +72,11 @@ function isStaffBusinessRouteAllowed(method: string, path: string) {
   // 型号封面图（受保护图片）：员工端列表/详情缩略图需要，只读。
   if (/^\/rental\/v1\/item-groups\/[^/]+\/images\/[^/]+$/u.test(path)) return verb === "GET";
   if (path === "/rental/v1/orders") return verb === "GET" || verb === "POST";
+  if (path === "/rental/v1/contribution-access") return verb === "GET";
+  if (path === "/rental/v1/contribution-page-access") return verb === "GET";
+  if (path === "/rental/v1/contribution-locations") return verb === "GET";
+  if (/^\/rental\/v1\/orders\/[^/]+\/services\/[^/]+\/execution-receipt$/u.test(path)) return verb === "GET";
+  if (/^\/rental\/v1\/orders\/[^/]+\/services\/[^/]+\/execution$/u.test(path)) return verb === "POST";
   if (path === "/rental/v1/quotes") return verb === "POST";
   if (path === "/rental/v1/workbench/todos" || path === "/rental/v1/assets" || path === "/rental/v1/stock-balances" || path === "/rental/v1/stock-ledger" || path === "/rental/v1/stock-dispositions" || path === "/rental/v1/work-orders" || path === "/rental/v1/work-order-assignees") {
     if (path === "/rental/v1/workbench/todos") return verb === "GET";

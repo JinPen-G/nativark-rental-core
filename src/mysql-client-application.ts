@@ -1810,6 +1810,33 @@ export class ClientApiService {
     return { apiVersion: CLIENT_API_VERSION, orderId, cancellationCharge, currency: order.currency ?? "CNY", calculatedAt, estimated: true };
   }
 
+  /** 原会话已由 Guard 核定；上下文只供端侧失效隔离，不能替代订单归属或提交授权。 */
+  async contributionContext(context: ClientRequestContext): Promise<import("./client-contribution-context").RentalClientContributionContext> {
+    const tenant = await this.prisma.tenant.findFirst({ where: { id: context.tenantId }, select: { name: true } });
+    if (!tenant) throw new NotFoundException("租户不存在");
+    return { audience: "client", tenantId: context.tenantId, subjectId: context.customerId,
+      workspaceId: context.workspaceId, sessionRevision: requestFingerprint(["client", context.sessionId]),
+      authorizationRevision: requestFingerprint([context.tenantId, context.customerId, context.customerType,
+        context.workspaceId, context.membershipStatus, context.categoryCode]),
+      displayName: context.displayName, tenantName: tenant.name, workspaceName: context.workspaceName,
+      canAct: context.membershipStatus === "active" };
+  }
+
+  async cancellationReceipt(context: ClientRequestContext, orderId: string, key: string): Promise<import("./client-contribution-context").RentalClientCancellationReceipt> {
+    await this.assertClientOrder(context, orderId);
+    const receipt = await this.idempotent.readReceipt({ tenantId: context.tenantId, action: "order.cancel", key, orderId,
+      replay: async (response) => {
+        const current = await this.assertClientOrder(context, orderId);
+        const original = response as RentalOrder | undefined;
+        // 当前 cancelled 状态并非本操作的提交证据；必须存在同租户/本人/原订单的取消收据。
+        if (!original || original.id !== orderId || !this.clientOwnsOrder(context, original)
+          || String(original.status).toLowerCase() !== "cancelled" || String(current.status).toLowerCase() !== "cancelled") return undefined;
+        return { status: "committed" as const, orderId, operationKey: key };
+      } });
+    await this.assertClientOrder(context, orderId);
+    return receipt ?? { status: "unknown", orderId, operationKey: key };
+  }
+
   async cancelOrder(context: ClientRequestContext, orderId: string, input: { reason: string }, requestContext?: ClientOrderRequestContext) {
     this.requireActiveMembership(context);
     await this.assertClientOrder(context, orderId);

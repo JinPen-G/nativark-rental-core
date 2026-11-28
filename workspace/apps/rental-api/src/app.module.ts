@@ -25,6 +25,7 @@ import { RentalApplicationLifecycle } from "./lifecycle";
 import { createRentalHostHttpPolicy } from "./http-policy";
 import { createRentalHostOpenApi } from "./openapi";
 import { RentalLegacyAccessModule, withRentalLegacyOpenApi } from "./legacy-access-http";
+import { RentalInstallationStatusModule, withRentalInstallationOpenApi } from "./installation-http";
 import type { LegacyRentalDataSelection } from "./legacy-data-selection";
 export { LegacyRentalDataSelection } from "./legacy-data-selection";
 export { RENTAL_HOST_CONTROLLERS } from "./http-policy";
@@ -52,6 +53,7 @@ export function createRentalHostModule<Host extends RentalHostAssembly>(input: {
   openApi(lock: CoreDeploymentLock, policy: RentalHttpAccessPolicy): ReturnType<typeof createRentalHostOpenApi>;
   ai?: RentalAiHostModule<Host>;
   legacyAccess?: boolean;
+  installationStatus?: boolean;
   /** 静态宿主用导出的同一组装令牌接各 Core 自有模块；不重建 Rental 或公共服务。 */
   additionalHttp?(assembly: DynamicModule): readonly DynamicModule[];
 }): DynamicModule {
@@ -89,12 +91,16 @@ export function createRentalHostModule<Host extends RentalHostAssembly>(input: {
     useFactory: (host: Host) => host.packages });
   const legacy = input.legacyAccess ? RentalLegacyAccessModule.register({ imports: [assembly], inject: [RENTAL_HOST_ASSEMBLY],
     useFactory: (host: Host) => { if (!host.legacyAccess) throw new Error("存量管理模块缺少同宿主旧账选择"); return host.legacyAccess; } }) : undefined;
-  return { module: RentalAppModule, imports: [assembly, httpApplications, core, packages, ...(legacy ? [legacy] : []),
+  const installation = input.installationStatus ? RentalInstallationStatusModule.register({ imports: [assembly], inject: [RENTAL_HOST_ASSEMBLY],
+    useFactory: (host: Host) => { if (!host.installation) throw new Error("安装观察缺少同宿主完整 v2 选择"); return host.installation; } }) : undefined;
+  const document = input.openApi(input.lock, policy);
+  const openApiDocument = input.legacyAccess ? withRentalLegacyOpenApi(document)
+    : input.installationStatus ? withRentalInstallationOpenApi(document) : document;
+  return { module: RentalAppModule, imports: [assembly, httpApplications, core, packages, ...(legacy ? [legacy] : []), ...(installation ? [installation] : []),
     PlatformServerModule.register({ imports: [assembly, RentalDatabaseModule, core, packages], inject: [RentalDatabaseClient],
       useFactory: (database: RentalDatabaseClient) => database,
       applicationsProvider: { provide: "rental.platform.applications", inject: [RENTAL_HOST_ASSEMBLY],
-        useFactory: (host: Host) => host.platform }, openApiDocument: input.legacyAccess
-          ? withRentalLegacyOpenApi(input.openApi(input.lock, policy)) : input.openApi(input.lock, policy) }),
+        useFactory: (host: Host) => host.platform }, openApiDocument }),
     RentalHttpModule.registerFactory({ imports: [httpApplications], inject: [HTTP_APPLICATIONS],
       useFactory: (http: ReturnType<typeof createRentalHttpApplicationViews>) => http }),
     RentalPaymentsHttpModule.registerFactory({ imports: [assembly, httpApplications], inject: [RENTAL_HOST_ASSEMBLY, HTTP_APPLICATIONS],

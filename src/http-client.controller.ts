@@ -64,6 +64,7 @@ import { type ClientRequestContext as ClientSessionContext } from "./client-cont
 import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host';
 import { runWithRequestIdentity } from '@rental-os/platform-server/request-identity';
 import { rentalNativeResponse } from './http-native-response';
+import { rentalHttpIdempotencyKey } from './http-context';
 
 interface ClientRequest {
   client?: ClientSessionContext;
@@ -273,6 +274,50 @@ export class ClientApiController {
   @Get("config")
   config(@Req() req: ClientRequest) {
     return this.api.config(currentClient(req));
+  }
+
+  private async revalidateContributionRead(req: ClientRequest, original: ClientSessionContext, path: string) {
+    const authorization = req.headers?.authorization;
+    if (typeof authorization !== "string" || !this.readGuard) throw new UnauthorizedException("当前客户端读取权限不可用");
+    await runWithRequestIdentity({}, async () => {
+      const request: ClientRequest & { method: string; url: string } = { method: "GET", url: path, headers: { authorization }, ip: req.ip };
+      if (await this.readGuard!.revalidateClientRead(new ExecutionContextHost([request])) !== true
+        || JSON.stringify(currentClient(request)) !== JSON.stringify(original)) throw new UnauthorizedException("读取期间客户端身份或范围已变化");
+    });
+  }
+
+  @Get("auth/contribution-context")
+  async contributionContext(@Req() req: ClientRequest) {
+    const original = structuredClone(currentClient(req));
+    const result = await this.api.contributionContext(original);
+    await this.revalidateContributionRead(req, original, "/api/client/v1/auth/contribution-context");
+    return result;
+  }
+
+  @Get("contribution-access")
+  async contributionAccess(@Req() req: ClientRequest) {
+    const context = await this.contributionContext(req);
+    if (!context.canAct) throw new UnauthorizedException("当前会员关系不允许租赁操作");
+    return { allowed: true as const };
+  }
+
+  /** 普通页面不借用动作权限或历史恢复声明；外层 Core 门禁与原本人列表范围同时成立。 */
+  @Get("contribution-page-access")
+  async contributionPageAccess(@Req() req: ClientRequest) {
+    const original = structuredClone(currentClient(req));
+    await this.api.listOrders(original, { page: 1, pageSize: 1 });
+    await this.revalidateContributionRead(req, original, "/api/client/v1/contribution-page-access");
+    return { allowed: true as const };
+  }
+
+  @Get("orders/:id/cancel-receipt")
+  async cancellationReceipt(@Req() req: ClientRequest, @Param("id") id: string) {
+    const key = rentalHttpIdempotencyKey(req);
+    if (!key) throw new BadRequestException("读取原取消收据必须携带 Idempotency-Key");
+    const original = structuredClone(currentClient(req));
+    const result = await this.api.cancellationReceipt(original, id, key);
+    await this.revalidateContributionRead(req, original, `/api/client/v1/orders/${encodeURIComponent(id)}/cancel-receipt`);
+    return result;
   }
 
   @Get("payment/capabilities")

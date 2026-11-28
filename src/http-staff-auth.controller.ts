@@ -1,5 +1,8 @@
 /** 员工认证 HTTP 入口，原会话参加者签发和核验 staff audience。 */
-import { Body, Controller, Get, Headers, Inject, Post } from "@nestjs/common";
+import { Body, Controller, Get, Headers, Inject, Post, UnauthorizedException } from "@nestjs/common";
+import { getRequestIdentity } from "@rental-os/platform-server/request-identity";
+import { requestFingerprint } from "@rental-os/platform-contracts/request-fingerprint";
+import type { RentalClientContributionContext } from "./client-contribution-context";
 import type {
   AuthUser, ChangePasswordRequest, LoginRequest, PlatformLoginResponse, PlatformSessionContextResponse, RefreshSessionRequest
 } from "@rental-os/platform-contracts";
@@ -47,6 +50,21 @@ export class StaffAuthController {
   @Post("logout") logout(@Body() body: RefreshSessionDto) { return this.auth.logout(body, "staff"); }
   @Get("me") me(@Headers("authorization") authorization?: string) { return this.auth.getCurrentUser(authorization, "staff"); }
   @Get("session-context") sessionContext(@Headers("authorization") authorization?: string) { return this.auth.getSessionContext(authorization, "staff"); }
+  @Get("contribution-context")
+  async contributionContext(@Headers("authorization") authorization?: string): Promise<RentalClientContributionContext> {
+    const identity = getRequestIdentity(), context = await this.auth.getSessionContext(authorization, "staff");
+    if (identity?.audience !== "staff" || !identity.accessSession?.sessionId || !identity.workspaceId
+      || identity.tenantId !== context.user.tenantId || identity.userId !== context.user.id
+      || identity.workspaceId !== context.currentWorkspaceId || context.user.isSaasAdmin) throw new UnauthorizedException("员工会话或空间已变化");
+    const { user } = context, permissions = user.permissions ?? [];
+    return { audience: "staff", tenantId: user.tenantId, subjectId: user.id, workspaceId: identity.workspaceId,
+      sessionRevision: requestFingerprint(["staff", identity.accessSession.sessionId]),
+      authorizationRevision: requestFingerprint([permissions.slice().sort(), user.isPlatformAdmin,
+        user.dataScope, user.organizationId, context.locationScope ?? user.locationScope, context.currentWorkspaceId]),
+      displayName: user.displayName, tenantName: context.tenant.tenantName,
+      workspaceName: context.workspaces?.find(row => row.id === identity.workspaceId)?.name,
+      canAct: Boolean(user.isPlatformAdmin || permissions.includes("*") || permissions.includes("rental-os:order:operate")) };
+  }
   @Post("change-password") changePassword(@Headers("authorization") authorization: string | undefined, @Body() body: ChangePasswordDto) {
     return this.auth.changePassword(authorization, body, "staff");
   }
