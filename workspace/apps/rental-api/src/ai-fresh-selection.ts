@@ -7,6 +7,7 @@ import { readPlatformDataCapabilityPackage } from "@rental-os/core-contracts/pla
 import { readPublicAiDataPackage, requirePublicAiDataPackage } from "@rental-os/public-ai-data/public-data-package";
 import { createPublicPlatformDataPlan } from "@rental-os/platform-api/data-plan";
 import type { CoreMysqlDataPlan } from "@rental-os/core-host/mysql-deployment";
+import type { CoreHostSqlTransaction } from "@rental-os/core-host/mysql";
 import { requireRentalDeploymentPackage } from "./deployment-package";
 import { composeRentalPublicAiPrismaSchema, createFreshRentalAiDataObservation, createRentalAiMysqlPlans, readRentalAiDataExtension } from "./ai-data-extension";
 
@@ -14,6 +15,7 @@ type Observation = ReturnType<typeof createFreshRentalAiDataObservation>;
 type FixedMcpData = { plan: CoreMysqlDataPlan; readDataPackage(): { root: string; release: CorePlatformDataCapabilityRelease } };
 
 export class FreshRentalAiSelection {
+  readonly #lock: ReturnType<typeof CorePhasedMigrationLockSchema.parse>;
   readonly #base: CoreDeploymentLock;
   readonly #dataPlan: ReturnType<typeof createRentalAiMysqlPlans>["publicAi"];
   readonly #dataRoot: string;
@@ -23,6 +25,7 @@ export class FreshRentalAiSelection {
   readonly #schema: string;
 
   get base() { return structuredClone(this.#base); }
+  get lock() { return structuredClone(this.#lock); }
   get schema() { return this.#schema; }
 
   constructor(input: { lock: unknown; publicAiDirectory: string; publicSchema: string;
@@ -44,6 +47,7 @@ export class FreshRentalAiSelection {
     this.#dataPlan = createRentalAiMysqlPlans(contribution, extension, data.release).publicAi;
     this.#schema = composeRentalPublicAiPrismaSchema(input.publicSchema, contribution, rental.schema, extension);
     this.#base = lock.base;
+    this.#lock = lock;
     this.#data = data.release;
     this.#dataRoot = data.root;
     this.#mcp = input.mcp;
@@ -62,5 +66,32 @@ export class FreshRentalAiSelection {
       verifyDataPackage: () => { requirePublicAiDataPackage(this.#dataRoot, this.#data); this.#mcp?.readDataPackage(); },
       phasedData: this.#observe, readDataPackages
     };
+  }
+
+  /** 仅供同宿主的只读安装观察；实际包每次重核，不将锁声明当成安装事实。
+   * 平台运行证据、Client 与初始化由对应宿主读者补齐；这里不判整套 ready。 */
+  readInstalled() {
+    const lock = this.lock;
+    let installed: { cores: CoreDeploymentLock["cores"];
+      dataCapabilities: NonNullable<CoreDeploymentLock["dataCapabilities"]> } | null = null;
+    let packageReason: "verified" | "package_unavailable" = "package_unavailable";
+    try {
+      const rental = requireRentalDeploymentPackage(lock.base.cores[0], lock.base.platform.versions);
+      const data = this.data();
+      data.verifyDataPackage();
+      const capabilities = data.readDataPackages();
+      const expected = lock.base.dataCapabilities ?? [];
+      if (capabilities.length !== expected.length || new Set(capabilities.map(item => item.release.id)).size !== expected.length
+        || expected.some(release => !capabilities.some(item => isDeepStrictEqual(item.release, release))))
+        throw new Error("实际能力包与原选择不同");
+      installed = { cores: [{ manifest: rental.manifest, sha256: rental.sha256 }],
+        dataCapabilities: capabilities.map(item => item.release) };
+      packageReason = "verified";
+    } catch { /* 不输出本地路径、连接信息或底层错误。 */ }
+    return { lock, installed, packageReason };
+  }
+
+  async inspect(database: Pick<CoreHostSqlTransaction, "$queryRaw">) {
+    return { ...this.readInstalled(), observation: await this.#observe.inspect(database) };
   }
 }

@@ -15,6 +15,9 @@ import type { RentalHostCoreSetup } from "./additional-cores";
 import type { FreshRentalAiSelection } from "./ai-fresh-selection";
 import type { LegacyRentalDataSelection } from "./legacy-data-selection";
 export { LegacyRentalDataSelection } from "./legacy-data-selection";
+export { FreshRentalAiSelection } from "./ai-fresh-selection";
+export { readFreshRentalClientObservation, readFreshRentalInitialization, readFreshRentalPreparation,
+  readFreshRentalExtensionObservation } from "./ai-installation-observation";
 
 // AI 编译使用 dist-ai 中的一组令牌。扩展宿主从此出口同时取得启动与组装
 // 令牌，避免普通 dist 的 bootstrap 查找另一个 Symbol 或实例化第二套服务图。
@@ -40,6 +43,7 @@ class RentalAiHttpModule {}
 export function createRentalAiHostModule<Additional = unknown>(options: RentalAiModuleOptions<Additional>): DynamicModule {
     const platformRetention = options.platformRetention;
     return createRentalHostModule<RentalAiHostAssembly<Additional>>({ lock: options.lock, legacyAccess: Boolean(options.legacy),
+      installationStatus: Boolean(options.fresh) && !options.legacy,
       assemble: (database, configuration) => composeRentalAiApplication({ database, configuration, lock: options.lock, fresh: options.fresh,
         additionalCores: options.additionalCores, legacy: options.legacy }),
       createPolicy: createRentalAiHttpPolicy,

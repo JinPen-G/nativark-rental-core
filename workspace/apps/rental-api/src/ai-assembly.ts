@@ -15,6 +15,8 @@ import { createRentalAiHttpPolicy, rentalAiDeploymentContinuationSelector, renta
 import { createRentalAiRemovalDependencies } from "./core-removal-source";
 import { FreshRentalAiSelection } from "./ai-fresh-selection";
 import type { LegacyRentalDataSelection } from "./legacy-data-selection";
+import { createFreshRentalInstallationStatus } from "./ai-installation-status";
+import { readFreshRentalPlatformObservation } from "./ai-installation-observation";
 
 export function composeRentalAiApplication<Additional = unknown>(input: {
   database: RentalDatabaseClient;
@@ -39,6 +41,10 @@ export function composeRentalAiApplication<Additional = unknown>(input: {
   const continuation = rentalAiDeploymentContinuationSelector(policy), receipts = rentalAiOriginalReceiptSelector(policy);
   const management = rentalAiPlatformManagementSelector(policy);
   return composeRentalApplication<RentalAiBinding, Additional>({ ...input, lock, aiMode: "enabled", ai: { ...participants, ...data,
+    ...(fresh && !input.legacy ? { installation: (host: Pick<Parameters<typeof createFreshRentalInstallationStatus>[0],
+      "database" | "authentication" | "catalogue">) =>
+      createFreshRentalInstallationStatus({ ...host, fresh,
+        readPlatform: () => readFreshRentalPlatformObservation(input.configuration, fresh.lock) }) } : {}),
     deploymentContinuation: (method, path) => continuation.isRoute({ method, url: path }),
     originalReceiptRead: (method, path) => receipts.isRoute({ method, url: path }),
     platformManagement: (method, path) => management.isRoute({ method, url: path }),

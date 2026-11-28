@@ -41,6 +41,7 @@ import { createRentalCoreRemovalSource } from "./core-removal-source";
 import { LegacyRentalDataSelection } from "./legacy-data-selection";
 import { createRentalLegacyAccessManagement } from "./legacy-access-management";
 import { createRentalLegacyHttpAccess } from "./legacy-access-http";
+import { createRentalInstallationHttpAccess, type RentalInstallationStatus } from "./installation-http";
 
 /** 仅受控宿主装配可提供；请求、Core 包清单和环境变量不能注入运行参加者。 */
 export interface RentalHostAiSetup<Binding> {
@@ -50,6 +51,8 @@ export interface RentalHostAiSetup<Binding> {
   /** Fresh v2 admission includes the extension's original receipt on this reader. */
   phasedData?: (database: Pick<CoreHostSqlTransaction, "$queryRaw">) => Promise<CoreDataObservation>;
   verifyDataPackage?(): void;
+  installation?(input: { database: RentalDatabaseClient; authentication: RentalApplication["authSource"];
+    catalogue: CoreDeployedCatalogue }): RentalInstallationStatus;
   fileCleanupKnowledge: NonNullable<RentalFileCleanupAuthorityDependencies["knowledge"]>;
   participants: RentalApplicationParticipants;
   /** 从实际 AI Controller/handler 闭集生成；只保留原结果/控制入口，新工作仍在原事务检查。 */
@@ -96,6 +99,7 @@ export interface RentalHostAssembly<Binding = unknown, Additional = unknown> {
   readonly lifecycle: RentalApplicationLifecycle;
   readonly permissionStartup: CoreHostPermissionStartup;
   readonly legacyAccess?: ReturnType<typeof createRentalLegacyAccessManagement>;
+  readonly installation?: RentalInstallationStatus;
 }
 
 export function composeRentalApplication<Binding = never, Additional = unknown>(input: {
@@ -203,8 +207,10 @@ export function composeRentalApplication<Binding = never, Additional = unknown>(
     audit: dependencies.audit, term: dependencies.term, deployment: catalogue.availability,
     requireData: (transaction, tenantId) => catalogueForTransaction(transaction).availability.requireAvailable("rental", tenantId),
     registrations: catalogue.registrations, authorizeContainer: platformHost.authorizeContainer }) : undefined;
-  const coreHttp = createRentalLegacyHttpAccess(legacyAccess,
-    createPlatformCorePackageAssemblyHttpAccess(packages, createPlatformCoreHttpAccess(core)));
+  const installation = !legacy && phasedData && input.aiMode === "enabled"
+    ? input.ai.installation?.({ database, authentication: rental.authSource, catalogue }) : undefined;
+  const coreHttp = createRentalInstallationHttpAccess(installation, createRentalLegacyHttpAccess(legacyAccess,
+    createPlatformCorePackageAssemblyHttpAccess(packages, createPlatformCoreHttpAccess(core))));
   const authorization = createRentalAuthorization(shared);
   const guard = new authorization.Guard(rental.auth, rental.foundation.capabilities, rental.client.auth,
     rental.client.rateLimit, database, rental.subscriptions);
@@ -256,7 +262,7 @@ export function composeRentalApplication<Binding = never, Additional = unknown>(
       tenantBootstrapHttp: workspaces.tenantBootstrapHttpAccess }),
     payments: { runtime: rental.integrations.payments, statements: rental.integrations.statements, core: rental.primary.core },
     jobs: rental.integrations.ledger, notifications: rental.integrations.ledger,
-    permissionStartup, legacyAccess,
+    permissionStartup, legacyAccess, installation,
     lifecycle: new RentalApplicationLifecycle(rental, () => database.$disconnect(),
       configuration.get<string>("DATABASE_CONNECT_ON_START") === "true" ? () => database.$connect() : undefined,
       permissionStartup, legacy ? async () => { verifyDataPackage?.();

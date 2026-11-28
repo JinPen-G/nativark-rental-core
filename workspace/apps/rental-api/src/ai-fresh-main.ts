@@ -4,16 +4,14 @@ import { isAbsolute, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { CoreSourceSchema } from "@rental-os/core-contracts";
 import { readCorePackageOrdinaryFile } from "@rental-os/platform-core-host/core-package-preflight";
-import { Prisma } from "../generated/client";
 import { FreshRentalAiSelection } from "./ai-fresh-selection";
 import { RENTAL_AI_EXTENSION_FILES } from "./ai-data-extension";
 import { createRentalAiHostModule } from "./ai-app.module";
 import type { RentalAiPlatformRetentionFactory } from "./ai-composition";
 import { bootstrapFreshRentalComposition } from "./bootstrap";
-import { samePrismaSchema } from "./ai-fresh-schema";
+import { readFreshRentalClientObservation } from "./ai-installation-observation";
 
 const hostRoot = resolve(__dirname, "..");
-const modelNames = (schema: string) => [...schema.matchAll(/^model\s+(\w+)\s*\{/gm)].map(item => item[1]).sort();
 
 export function bootstrapFreshRentalAi(platformRetention?: RentalAiPlatformRetentionFactory) {
   return bootstrapFreshRentalComposition(async lock => {
@@ -29,9 +27,8 @@ export function bootstrapFreshRentalAi(platformRetention?: RentalAiPlatformReten
 export async function readFreshRentalAiSelection(lock: unknown, publicAiDirectory: string,
   mcp?: NonNullable<ConstructorParameters<typeof FreshRentalAiSelection>[0]["mcp"]>) {
   const read = (file: string) => readCorePackageOrdinaryFile(resolve(hostRoot, file), 32 * 1024 * 1024);
-  const [sourceBytes, publicBytes, clientBytes] = await Promise.all([
-    read("prisma/ai-extension/runtime-source.json"), read("../platform-api/prisma/schema.prisma"),
-    read("generated/client/schema.prisma")
+  const [sourceBytes, publicBytes] = await Promise.all([
+    read("prisma/ai-extension/runtime-source.json"), read("../platform-api/prisma/schema.prisma")
   ]);
   const source: unknown = JSON.parse(sourceBytes.toString("utf8"));
   if (typeof source !== "object" || source === null || !("format" in source) || source.format !== "rental-fresh-ai-runtime-1"
@@ -49,9 +46,7 @@ export async function readFreshRentalAiSelection(lock: unknown, publicAiDirector
     mcpRelease && { source: mcpRelease.source, sha256: mcpRelease.sha256 }))
     throw new Error("新装 MCP 锁与固定数据包运行来源不一致");
   // Prisma formats the generated copy; compare its original semantic tokens.
-  if (!samePrismaSchema(clientBytes.toString("utf8"), fresh.schema)
-    || !isDeepStrictEqual(Object.keys(Prisma.ModelName).sort(), modelNames(fresh.schema)))
-    throw new Error("新装 Rental AI Client 与固定 schema 不一致");
+  await readFreshRentalClientObservation(fresh.schema);
   return fresh;
 }
 

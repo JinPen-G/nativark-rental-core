@@ -5,7 +5,8 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { sqltag as sql } from "@prisma/client/runtime/library";
 import { CoreDataObservationSchema, CorePhysicalDataObservationSchema, CoreSourceSchema, checkCoreCombination, checkPlatformDataCapabilities,
-  coreDeploymentHostVersions, isCoreVersionSupported, type CoreDataObservation, type CoreManifest, type CorePlatformDataCapabilityRelease } from "@rental-os/core-contracts";
+  coreDeploymentHostVersions, isCoreVersionSupported, type CoreDataObservation, type CoreManifest, type CorePlatformDataCapabilityRelease,
+  type CoreMigrationExecution, type CorePhysicalDataObservation } from "@rental-os/core-contracts";
 import { CorePhasedMigrationLockSchema, corePostCapabilityPrismaMigrationName, platformCapabilityPrismaMigrationName,
   corePrismaMigrationName } from "@rental-os/core-contracts/deployment";
 import { CoreAccessError } from "@rental-os/core-host";
@@ -47,6 +48,8 @@ export function rentalAiExtensionPrerequisites(release: CorePlatformDataCapabili
   if (release.version === "0.2.0") return RENTAL_AI_EXTENSION_PREREQUISITES;
   if (release.version === "0.2.2") return { ...RENTAL_AI_EXTENSION_PREREQUISITES,
     publicAi: { minInclusive: "0.2.2", maxExclusive: "0.2.3" } } as const;
+  if (release.version === "0.2.4") return { ...RENTAL_AI_EXTENSION_PREREQUISITES,
+    publicAi: { minInclusive: "0.2.4", maxExclusive: "0.2.5" } } as const;
   throw new Error("Rental AI 扩展不支持该公共数据发行");
 }
 
@@ -209,6 +212,26 @@ type OriginalMigrationReceipt = { migrationName: string; checksum: string; finis
 const validDate = (value: unknown): value is Date => value instanceof Date && Number.isFinite(value.getTime());
 type ObservationPlan = { version: string; read: CoreMysqlDataPlan["readPhysical"] };
 
+export type FreshRentalAiDataReason = "not_checked" | "verified" | "ledger_unavailable" | "ledger_invalid"
+  | "ledger_conflict" | "ledger_incomplete" | "physical_unavailable" | "physical_mismatch";
+/** 原准入与诊断共用一次读取。null 表示没有取得证据，不能据缺账推断可重跑。 */
+export interface FreshRentalAiDataInspection {
+  data: CoreDataObservation | null;
+  reason: FreshRentalAiDataReason;
+  physical: Array<{ owner: string; observation: CorePhysicalDataObservation | null }>;
+  postCapability: Array<{
+    coreId: string;
+    migration: { id: string; sha256: string };
+    migrationName: string;
+    receipt: { checksum: string; finishedAt: string | null; rolledBackAt: string | null } | null;
+    execution: CoreMigrationExecution | null;
+    physical: CorePhysicalDataObservation | null;
+  }>;
+}
+type FreshRentalAiDataReader = ((database: Pick<CoreHostSqlTransaction, "$queryRaw">) => Promise<CoreDataObservation>) & {
+  inspect(database: Pick<CoreHostSqlTransaction, "$queryRaw">): Promise<FreshRentalAiDataInspection>;
+};
+
 /** Data gate for the selected fresh installation. The caller supplies plans and
  * extension provenance from its fixed build and reuses its current SQL reader. */
 export function createFreshRentalAiDataObservation(input: {
@@ -218,7 +241,7 @@ export function createFreshRentalAiDataObservation(input: {
   publicAiFiles: ReadonlyMap<string, Uint8Array>;
   extension: { source: CoreManifest["source"]; files: ReadonlyMap<string, Uint8Array> };
   mcp?: CoreMysqlDataPlan;
-}): (database: Pick<CoreHostSqlTransaction, "$queryRaw">) => Promise<CoreDataObservation> {
+}): FreshRentalAiDataReader {
   const { base, postCapability } = CorePhasedMigrationLockSchema.parse(input.lock);
   const [pin] = base.cores, releases = base.dataCapabilities ?? [], [post] = postCapability;
   const release = releases.find(item => item.id === "ai-native"), mcp = releases.find(item => item.id === "mcp");
@@ -264,7 +287,14 @@ export function createFreshRentalAiDataObservation(input: {
   const physical: ObservationPlan[] = [...basePlans.map(plan => ({ version: plan.data.version, read: plan.readPhysical.bind(plan) })),
     { version: PUBLIC_AI_DATA_VERSION, read: ai.extension.readPhysical }];
   const unavailable = () => new CoreAccessError("core_unavailable", "Rental AI 新装的原迁移账或物理结构尚未核定");
-  return async database => {
+  const inspect = async (database: Pick<CoreHostSqlTransaction, "$queryRaw">): Promise<FreshRentalAiDataInspection> => {
+    const owners = ["platform", "rental", ...capabilityPlans.map(item => item.capabilityId), "rental-ai-extension"];
+    const result: FreshRentalAiDataInspection = { data: null, reason: "ledger_unavailable",
+      physical: owners.map(owner => ({ owner, observation: null })), postCapability: [{
+      coreId: post.coreId, migration: { id: post.migration.id, sha256: post.migration.sha256 }, migrationName,
+      receipt: null, execution: null, physical: null
+    }] };
+    const extension = result.postCapability[0];
     try {
       // Preserve the database order across phases. A v1, extra or mixed receipt
       // cannot be projected away to make this fresh installation look complete.
@@ -274,27 +304,42 @@ export function createFreshRentalAiDataObservation(input: {
         FROM _prisma_migrations ORDER BY started_at, id`) : await database.$queryRaw<OriginalMigrationReceipt[]>(sql`
         SELECT migration_name AS migrationName, checksum, finished_at AS finishedAt, rolled_back_at AS rolledBackAt
         FROM _prisma_migrations ORDER BY started_at, id`);
-      if (!Array.isArray(receipts)) throw unavailable();
+      result.reason = "ledger_invalid";
+      if (!Array.isArray(receipts)) return result;
+      const original = receipts.filter(receipt => receipt?.migrationName === migrationName && receipt.rolledBackAt === null);
+      if (original.length === 1 && typeof original[0].checksum === "string") extension.receipt = {
+        checksum: original[0].checksum, finishedAt: validDate(original[0].finishedAt) ? original[0].finishedAt.toISOString() : null,
+        rolledBackAt: null
+      };
+      extension.execution = { state: "unknown", migration: extension.migration };
       let applied = 0;
       const appliedReceipts: OriginalMigrationReceipt[] = [];
       for (const receipt of receipts) {
         const checksum = checksums.get(receipt?.migrationName);
-        if (checksum === undefined || checksum !== receipt.checksum) throw unavailable();
+        result.reason = "ledger_conflict";
+        if (checksum === undefined || checksum !== receipt.checksum) return result;
         if (receipt.rolledBackAt !== null) {
-          if (mcp || !validDate(receipt.rolledBackAt)) throw unavailable();
+          if (mcp || !validDate(receipt.rolledBackAt)) return result;
           continue;
         }
-        if (receipt.migrationName !== expected[applied]?.name || !validDate(receipt.finishedAt))
-          throw unavailable();
+        if (receipt.migrationName !== expected[applied]?.name) return result;
+        result.reason = "ledger_incomplete";
+        if (!validDate(receipt.finishedAt)) return result;
         if (mcp && (!receipt.startedAt || !validDate(receipt.startedAt) || receipt.finishedAt < receipt.startedAt
-          || (receipt.appliedSteps !== 1 && receipt.appliedSteps !== 1n))) throw unavailable();
+          || (receipt.appliedSteps !== 1 && receipt.appliedSteps !== 1n))) return result;
         appliedReceipts.push(receipt);
         applied++;
       }
-      if (applied !== expected.length) throw unavailable();
-      for (const plan of physical) {
+      result.reason = "ledger_incomplete";
+      if (applied !== expected.length) return result;
+      extension.execution = { state: "ready" };
+      for (const [index, plan] of physical.entries()) {
+        result.reason = "physical_unavailable";
         const observed = CorePhysicalDataObservationSchema.safeParse(await plan.read(database));
-        if (!observed.success || observed.data.version !== plan.version) throw unavailable();
+        result.reason = "physical_mismatch";
+        if (!observed.success || observed.data.version !== plan.version) return result;
+        result.physical[index].observation = observed.data;
+        if (index === physical.length - 1) extension.physical = observed.data;
       }
       const state = (plan: CoreMysqlDataPlan, start: number) => ({ version: plan.data.version, execution: { state: "ready" as const },
         appliedMigrations: appliedReceipts.slice(start, start + plan.migrationNames.length)
@@ -305,14 +350,21 @@ export function createFreshRentalAiDataObservation(input: {
         offset += plan.migrationNames.length;
         return observed;
       });
-      return CoreDataObservationSchema.parse({ platform: state(input.platform, 0),
+      result.data = CoreDataObservationSchema.parse({ platform: state(input.platform, 0),
         cores: [{ coreId: "rental", ...state(input.rental, input.platform.migrationNames.length) }],
         dataCapabilities });
-    } catch (error) {
-      if (error instanceof CoreAccessError) throw error;
-      throw unavailable();
+      result.reason = "verified";
+      return result;
+    } catch {
+      // 原错误可能带连接串或数据库内容，诊断只公开固定阶段原因。
+      return result;
     }
   };
+  return Object.assign(async (database: Pick<CoreHostSqlTransaction, "$queryRaw">) => {
+    const result = await inspect(database);
+    if (!result.data) throw unavailable();
+    return result.data;
+  }, { inspect });
 }
 
 export function createFreshRentalAiDataAvailability(input: Parameters<typeof createFreshRentalAiDataObservation>[0]) {

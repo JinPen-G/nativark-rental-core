@@ -22,6 +22,18 @@ node scripts/package-rental-host.cjs --development --repo <Zelo目录> --reposit
 
 当前新装扩展为 [20261127000000](prisma/ai-extension/20261127000000-initial.sql)。它只修正 MySQL 对中间 `CHECK` 布尔类型的要求，末态约束与原方案相同；前版 [原 SQL](prisma/ai-extension/20261126000000-initial.sql) 及其 [来源](prisma/ai-extension/provenance.json)保留，不作为可执行的新装文件。
 
+### v2 安装观察接点
+
+`@rental-os/rental-api/ai-app-module` 导出 [FreshRentalAiSelection](src/ai-fresh-selection.ts)。`lock` 返回完整 v2 锁的副本；`inspect(transaction)` 每次核实际 Rental/能力包，并复用原 `phasedData` 的迁移顺序、摘要和物理检查，返回 `CoreDataObservation | null` 及后置扩展的原收据、`CoreMigrationExecution | null`、`CorePhysicalDataObservation | null`。缺账、冲突、未完成和读取失败使用固定原因码，不返回原数据库错误，也不推断允许重跑。`data().phasedData` 仍只在整条原门禁通过时返回准入观察。
+
+同一出口的 [readFreshRentalClientObservation](src/ai-installation-observation.ts) 与启动入口共用所选 schema 及实际加载 Client 模型检查；`readFreshRentalInitialization(database, transaction)` 只读原 SaaS 初始化状态/收据和 Rental 内置品类对象。调用者须使用同一数据库、原身份围栏和一致读取事务，分别报告 Client、包、原账、物理、初始化证据；这些事实不代表服务已运行、部署准入或成员业务授权。
+
+显式 fresh、非 legacy 的 AI 宿主挂载 `GET /api/platform/core-installation/status`，不接受查询参数，响应禁止缓存。合同复用 `@rental-os/core-contracts/phased-installation`；当前 operator/SaaS 身份和 `system:tenant:manage` 权限由原 Guard 与同一 RepeatableRead 事务前后复核。实际包、Client、原账、物理结构和初始化分别报告；读取失败返回固定原因码及 null/not_checked，不执行初始化或迁移。
+
+公共运行身份沿包管理原配置 `CORE_PACKAGE_STORAGE_ROOT` 和 `CORE_PLATFORM_PACKAGE_REFERENCE` 读取受管归档索引。索引须指向同一完整锁的底座归档；底座六包入口、原 `rental-host.context.json`、准备回执与完整 v2 部署锁必须相符。缺归档或运行依据时标记 `runtime_identity_unverified`，不能把锁声明当实际运行结果。普通无 AI 与 legacy 宿主不挂载此路由，v1 包管理继续拒绝完整 v2 组合。
+
+本候选使用包含完整 v2 读口与 SDK 同源映射修复的固定 Zelo `5a6bbbf7593414a122a060018cb1abd87f1c20bf`。开发组合不具备正式发版或服务器迁移许可。
+
 ## 显式选装 MCP（仅新装开发）
 
 在同一打包命令上使用 `--development --fresh-ai --mcp`。配套源码也要使用同一组 SHA 和 `--fresh-ai --mcp --profile host`。只对 `utf8mb4_unicode_ci` 的专用空库应用 **14 公共 → 2 Rental → 1 公共 AI → 5 MCP → 1 Rental 扩展**。沿包内步骤设置 `RENTAL_MCP_DATA_PACKAGE_DIR`，指向实际随包的 `packages/mcp-server` 绝对目录；再用 `dist-mcp/mcp-fresh-initialize.js` 初始化，启动 `dist-mcp/mcp-fresh-main.js`。原 18 条 AI-only、普通库和旧混合库不能换锁直接采用这条链。
